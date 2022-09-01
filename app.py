@@ -1,4 +1,6 @@
 # phone/tv/desktop --> server : played(time)
+import random
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import NewType, Callable, Optional
@@ -30,12 +32,44 @@ class PlayedEvent:
     device_id: DeviceId
 
 
+class MessageQueue:
+    def __init__(self):
+        # message is a dequeue
+        self.messages = deque()
+        self.push_cnt = 0
+
+    def push(self, message):
+        self.push_cnt += 1
+        if self.push_cnt % 10 == 0:
+            event_print(f"{len(self.messages)} messages pushed")
+        self.messages.append(message)
+
+    def pop(self):
+        return self.messages.popleft()
+
+    def get_message_batch(self, n: int):
+        """
+        returns a batch of messages if available
+
+        Similar to AWS SQS. Once a message has been read, we mark it as delivered.
+        """
+
+
 class APIServer:
-    def __init__(self, name: str):
+    def __init__(self, name: str, message_queue: MessageQueue):
         self.name = name
+        self.message_queue = message_queue
 
     def post_play_event(self, event):
         event_print(f"{self.name}: POST {event}")
+
+        # probability 50%
+        # if random.random() < 0.1:
+        #     event_print(f"{self.name}: ERROR DELIVERING PLAY EVENT")
+        #     return
+
+        event_print(f"{self.name}: DELIVERING PLAY EVENT {event}")
+        self.message_queue.push(event)
 
 
 class LoadBalancer:
@@ -57,8 +91,11 @@ class LoadBalancer:
         self.post_play_event_by_device_id(event)
 
 
-GLOBAL_API_SERVER = LoadBalancer([
-    APIServer(f"api-server-{idx}") for idx in range(10)])
+# GLOBAL_API_SERVER = LoadBalancer([
+#     APIServer(f"api-server-{idx}") for idx in range(10)])
+
+GLOBAL_MESSAGE_QUEUE = MessageQueue()
+GLOBAL_API_SERVER = APIServer("api-server", GLOBAL_MESSAGE_QUEUE)
 
 
 class DeviceType(Enum):
@@ -68,7 +105,7 @@ class DeviceType(Enum):
 
 
 def event_print(s):
-    print(f"{GLOBAL_TIME_S}: {s}")
+    print(f"{GLOBAL_TIME_S:5d}: {s}")
 
 
 class VideoPlayer:
@@ -155,6 +192,7 @@ def main():
                                    user_id=UserId('nana'),
                                    movie_id=MovieId('lassie')
                                    )
+
     players = [
         manuelsVideoPlayer,
         thorsVideoPlayer,
@@ -179,7 +217,7 @@ def main():
     global GLOBAL_TIME_S
 
     # the universe starts
-    for time_s in range(60 * 5):
+    for time_s in range(60 * 60):
         GLOBAL_TIME_S = time_s
         if time_s % 30 == 0:
             event_print("TICK")
